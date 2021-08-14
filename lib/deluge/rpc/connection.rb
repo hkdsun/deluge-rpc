@@ -67,7 +67,7 @@ module Deluge
       end
 
       def authenticate(login, password)
-        self.call(DAEMON_LOGIN, login, password)
+        self.call(DAEMON_LOGIN, login, password, client_version: "2.0")
       end
 
       def method_list
@@ -93,7 +93,10 @@ module Deluge
         raise "Not connected!" unless @connection
 
         kwargs = {}
-        kwargs = args.pop if args.size == 1 && args.last.is_a?(Hash)
+        if args.last.is_a?(Hash)
+          kwargs = args.last
+          args = args[0...-1]
+        end
 
         future = Concurrent::IVar.new
 
@@ -145,7 +148,7 @@ module Deluge
       end
 
       def dispatch_packet(packet)
-        type, response_id, value = packet
+        type, response_id, value, err_msg = packet
 
         case type
         when RPC_RESPONSE, RPC_ERROR
@@ -156,7 +159,7 @@ module Deluge
           if type == RPC_RESPONSE
             future.set(value)
           else
-            future.fail(RPCError.new(value))
+            future.fail(RPCError.new("#{value}\n#{err_msg}"))
           end
         when RPC_EVENT
           handlers = @events[response_id]
@@ -189,7 +192,9 @@ module Deluge
 
         raise('Received response with unknown protocol_version=' + protocol_version) if protocol_version != PROTOCOL_VERSION
 
-        raw = socket.readpartial(buffer_size)
+        while raw.size < buffer_size
+          raw += socket.readpartial(buffer_size)
+        end
         raw = Zlib::Inflate.inflate(raw)
 
         parse_packets(raw)
